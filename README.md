@@ -39,7 +39,10 @@ Worker's status page, which is its `.workers.dev` address.
 3. **Settings → Bindings:** add a KV namespace binding, variable name `STATE`,
    pointing at the namespace from step 1.
 4. **Settings → Variables and Secrets:** add a **Secret** named `NTFY_TOPIC` with
-   your topic name (only the name, no `https://ntfy.sh/`).
+   your topic name (only the name, no `https://ntfy.sh/`), and a **Secret** named
+   `NTFY_TOKEN` with an access token from a free ntfy.sh account (Account → Access
+   tokens). Without the token, ntfy.sh limits by IP address, and Cloudflare's IPs are
+   shared with other users, so the daily quota is often already used up (HTTP 429).
 5. **Settings → Trigger events:** add a Cron Trigger `* * * * *` (every minute).
 6. Open the Worker's address once. The status page should show ✅ for the topic and
    storage; visiting it also switches on the Bought buttons.

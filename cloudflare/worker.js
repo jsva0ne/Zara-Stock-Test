@@ -6,6 +6,8 @@
 // Needs (Cloudflare dashboard → this Worker → Settings):
 //   - KV namespace binding named STATE
 //   - Secret NTFY_TOPIC (your private ntfy topic name)
+//   - Secret NTFY_TOKEN (recommended: ntfy.sh access token, tk_...). Without it, ntfy.sh limits
+//     by IP address, and Cloudflare's IPs are shared with other users, so the daily quota runs out.
 //   - Cron trigger "* * * * *"
 // Then open the Worker's URL once: that shows the status page and enables the Bought buttons.
 //
@@ -59,10 +61,13 @@ async function saveIfChanged(env, state, before) {
   if (after !== before) await env.STATE.put("state", after);
 }
 
+// With a token, ntfy.sh counts usage against your account instead of the shared Cloudflare IP.
+const ntfyAuth = env => (env.NTFY_TOKEN ? { Authorization: `Bearer ${env.NTFY_TOKEN.trim()}` } : {});
+
 async function push(env, { title, message, click, priority = 3, tags = [], actions = [] }) {
   const res = await fetch(NTFY, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": "zara-restock-watcher" },
+    headers: { "Content-Type": "application/json", "User-Agent": "zara-restock-watcher", ...ntfyAuth(env) },
     body: JSON.stringify({ topic: env.NTFY_TOPIC, title, message, click, priority, tags, actions }),
   });
   if (!res.ok) throw new Error(`ntfy HTTP ${res.status}: ${(await res.text()).slice(0, 150)}`);
@@ -107,7 +112,8 @@ function parseShare(text) {
 
 async function pollInbox(env, state, settings) {
   const since = state.inboxSince || "1h";
-  const res = await fetch(`${NTFY}/${env.NTFY_TOPIC}-add/json?poll=1&since=${encodeURIComponent(since)}`);
+  const res = await fetch(`${NTFY}/${env.NTFY_TOPIC}-add/json?poll=1&since=${encodeURIComponent(since)}`,
+                          { headers: ntfyAuth(env) });
   if (!res.ok) throw new Error(`ntfy inbox HTTP ${res.status}`);
   const added = [], stopped = [], rejected = [];
   for (const line of (await res.text()).split("\n")) {
@@ -293,7 +299,7 @@ async function handleRequest(request, env) {
   const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Zara watcher</title><body style="font:16px system-ui;max-width:640px;margin:24px auto;padding:0 16px">
 <h1>Zara watcher</h1>
-<p>${env.NTFY_TOPIC ? "✅ ntfy topic set" : "❌ secret NTFY_TOPIC missing"} · ${env.STATE ? "✅ KV bound" : "❌ KV missing"} ·
+<p>${env.NTFY_TOPIC ? "✅ ntfy topic set" : "❌ secret NTFY_TOPIC missing"} · ${env.NTFY_TOKEN ? "✅ ntfy login" : "⚠️ no NTFY_TOKEN (shared quota)"} · ${env.STATE ? "✅ KV bound" : "❌ KV missing"} ·
 last alive ${esc(state.aliveAt || "not run yet: add the cron trigger")}</p>
 ${state.lastProblem ? `<p>⚠️ Since ${esc(state.problemSince)}: ${esc(state.lastProblem)}</p>` : "<p>✅ No problems</p>"}
 <h2>In stock now</h2><ul>${rows || "<li>Nothing watched is in stock.</li>"}</ul>
