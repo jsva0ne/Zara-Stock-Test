@@ -1,9 +1,12 @@
 name: Zara restock check
 
+# TEST MODE: a check every minute, reminders every 5 minutes.
+# GitHub's shortest schedule is 5 min, so each run does 5 checks 1 min apart.
+# Production: cron "4,19,34,49 * * * *", CHECKS_PER_RUN 1, REMIND_EVERY_MIN 60.
+
 on:
   schedule:
-    # Every 15 min, off the top of the hour (GitHub delays :00 runs most).
-    - cron: "4,19,34,49 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       test_notify:
@@ -21,15 +24,25 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
 
       - name: Check stock
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          REMIND_EVERY_MIN: ${{ vars.REMIND_EVERY_MIN || '60' }}
-        run: python3 check.py ${{ inputs.test_notify && '--test-notify' || '' }}
+          REMIND_EVERY_MIN: "5"
+          CHECKS_PER_RUN: "5"
+          TEST_NOTIFY: ${{ inputs.test_notify && 'yes' || '' }}
+        run: |
+          if [ -n "$TEST_NOTIFY" ]; then exec python3 check.py --test-notify; fi
+          rc=0
+          for i in $(seq 1 "$CHECKS_PER_RUN"); do
+            echo "--- check $i/$CHECKS_PER_RUN $(date -u +%H:%M:%S) UTC"
+            python3 check.py || rc=1
+            if [ "$i" -lt "$CHECKS_PER_RUN" ]; then sleep 60; fi
+          done
+          exit $rc
 
       - name: Save state
         if: always()

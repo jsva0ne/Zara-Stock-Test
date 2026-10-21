@@ -4,6 +4,9 @@ Checks the Zara items in `items.json` every 15 minutes (GitHub Actions, free)
 and pushes to your phone (ntfy, free) whenever a watched size can be added to
 the bag, then keeps reminding you until you mark the item bought.
 
+> **Currently in test mode:** a check every minute, reminders every 5 minutes.
+> The header of `.github/workflows/check.yml` lists the production values.
+
 ## Setup (≈10 min)
 
 1. **Phone:** install the **ntfy** app (Play Store) and subscribe to a topic

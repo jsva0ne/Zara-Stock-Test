@@ -26,7 +26,8 @@ ITEMS_FILE = ROOT / "items.json"
 STATE_FILE = ROOT / "state.json"
 
 REMIND_EVERY = timedelta(minutes=int(os.environ.get("REMIND_EVERY_MIN", "60")))
-SLACK = timedelta(minutes=5)  # GitHub runs drift; don't skip a reminder by seconds
+# Runs drift; remind a little early rather than skip a cycle (5 min at 60, 30 s at 5).
+SLACK = min(timedelta(minutes=5), REMIND_EVERY / 10)
 
 # Zara's per-size "availability" values. Only these two mean "can add to bag".
 BUYABLE = {"in_stock", "low_on_stock"}
