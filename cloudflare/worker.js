@@ -15,7 +15,8 @@ const TG = "https://api.telegram.org";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
            "(KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 const BUYABLE = new Set(["in_stock", "low_on_stock"]);
-const DEFAULTS = { remindEveryMin: 60, defaultSizes: ["S", "XS"] };
+// settings.json overrides these: check interval, one reminder after N minutes, default sizes
+const DEFAULTS = { checkEveryMin: 1, remindAfterMin: 60, defaultSizes: ["S", "XS"] };
 const SIZE_RE = /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{2,3})$/i;
 const ZARA_URL_RE = /https?:\/\/(?:www\.)?zara\.com\/[^\s"'<>]+/gi;
 const MIN = 60_000;
@@ -126,12 +127,16 @@ function parseShare(text) {
   return { urls, sizes, stop };
 }
 
-async function loadLists() {
+async function loadSettings() {
   const settings = { ...DEFAULTS };
   try { Object.assign(settings, await getJson(`${REPO_RAW}/settings.json`)); } catch { /* defaults */ }
+  return settings;
+}
+
+async function loadLists() {
   let repoItems = [], repoError = null;
   try { repoItems = await getJson(`${REPO_RAW}/items.json`); } catch (e) { repoError = e.message; }
-  return { settings, repoItems, repoError };
+  return { repoItems, repoError };
 }
 
 function mergeWatch(repoItems, watch) {
@@ -196,7 +201,7 @@ async function onUpdate(env, update) {
 
   const watch = await kvGet(env, "watch");
   const before = JSON.stringify(watch);
-  const { settings } = await loadLists();
+  const settings = await loadSettings();
   const replies = [];
   for (const url of share.urls) {
     // only product pages; shared favourites lists (/share/...) are off-limits per Zara's robots.txt
@@ -245,16 +250,20 @@ async function listText(env) {
   return lines.length ? `Watching ${lines.length}:\n${lines.join("\n")}` : "Nothing is being watched. Share a Zara link here to start.";
 }
 
-// ---------- the minute check ----------
+// ---------- the check (cron fires every minute; settings.checkEveryMin decides which minutes run) ----------
 
 async function runCheck(env, now = Date.now()) {
   now = Math.floor(now / MIN) * MIN;   // cron runs on whole minutes
+  const settings = await loadSettings();
+  const every = Math.max(1, Math.round(Number(settings.checkEveryMin) || 1));
+  if (Math.floor(now / MIN) % every !== 0) return { skipped: true };   // not this minute
+
   const [config, watch, state] = await Promise.all([kvGet(env, "config"), kvGet(env, "watch"), kvGet(env, "state")]);
   const before = JSON.stringify(state);
   const problems = [];
-  const { settings, repoItems, repoError } = await loadLists();
+  const { repoItems, repoError } = await loadLists();
   if (repoError) problems.push(`can't read items.json: ${repoError}`);
-  const remindMs = Math.max(1, settings.remindEveryMin) * MIN;
+  const remindMs = Math.max(1, Number(settings.remindAfterMin) || 60) * MIN;
   const chatId = config.chatId;
   if (!env.TELEGRAM_TOKEN) problems.push("secret TELEGRAM_TOKEN is missing");
   else if (!chatId) problems.push("no Telegram chat linked yet: open the bot and press Start");
@@ -277,30 +286,34 @@ async function runCheck(env, now = Date.now()) {
     if (!hits.length) { delete state.available[key]; continue; }
     if (!canSend) continue;   // alert once a chat is linked
 
-    // Reminders are timed from the first alert, so they need no storage writes
-    // (free plan allows ~1,000 writes/day): remind in the minute each full interval completes.
+    // One "Back in stock" when a watched size becomes buyable, then ONE reminder after
+    // remindAfterMin if it's still buyable. Selling out clears it (handled above), so the
+    // next restock starts over with a fresh alert.
     const prev = state.available[key] || {};
     const fresh = hits.filter(s => !(prev.sizes || []).includes(s));
     const since = prev.since ? Date.parse(prev.since) : null;
-    const age = since === null ? 0 : now - since;
-    const reminderDue = since !== null && age >= remindMs && age % remindMs < MIN;
     const isNew = since === null || fresh.length > 0;
-    let sinceIso = prev.since || null;
+    const reminderDue = !isNew && !prev.reminded && now - since >= remindMs;
+    let sinceIso = prev.since || null, reminded = Boolean(prev.reminded);
     const page = urlsFor(item.url).page;
 
     if (isNew || reminderDue) {
+      const mins = Math.round((now - since) / MIN);
       const text = isNew
         ? `🛍️ Back in stock: ${titleCase(info.name)}\n${info.colour}, size ${(fresh.length ? fresh : hits).join(", ")}`
-        : `⏰ Still in stock: ${titleCase(info.name)}\n${info.colour}, size ${hits.join(", ")}. Tap Bought to stop reminders.`;
+        : `⏰ Still in stock after ${mins >= 60 && mins % 60 === 0 ? `${mins / 60} h` : `${mins} min`}: ${titleCase(info.name)}\n` +
+          `${info.colour}, size ${hits.join(", ")}. This is the only reminder.`;
       try {
         await send(env, chatId, text, buttons(page, key));
-        if (isNew) sinceIso = new Date(now).toISOString();   // restart the reminder clock
+        if (isNew) { sinceIso = new Date(now).toISOString(); reminded = false; }   // new size restarts the clock
+        else reminded = true;
       } catch (e) {
         problems.push(`sending alert: ${e.message}`);
-        if (isNew) continue;   // not recorded, so the next minute retries the alert
+        if (isNew) continue;   // not recorded, so the next check retries the alert
       }
     }
-    state.available[key] = { item: `${titleCase(info.name)} (${info.colour})`, sizes: hits, since: sinceIso };
+    state.available[key] = { item: `${titleCase(info.name)} (${info.colour})`, sizes: hits, since: sinceIso,
+                             ...(reminded ? { reminded: true } : {}) };
   }
 
   for (const key of Object.keys(state.available)) if (!list.has(key)) delete state.available[key];

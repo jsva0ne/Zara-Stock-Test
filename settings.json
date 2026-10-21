@@ -1,4 +1,5 @@
 {
-  "remindEveryMin": 5,
+  "checkEveryMin": 3,
+  "remindAfterMin": 60,
   "defaultSizes": ["S", "XS"]
 }
