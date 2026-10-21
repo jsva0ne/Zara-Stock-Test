@@ -1,7 +1,6 @@
 name: Zara restock check
 
-# TEST MODE: a check every minute, reminders every 5 minutes.
-# GitHub's shortest schedule is 5 min, so each run does 5 checks 1 min apart.
+# TEST MODE: one quick check every 5 min (GitHub's shortest schedule), reminders every 5 min.
 # Production: cron "4,19,34,49 * * * *", CHECKS_PER_RUN 1, REMIND_EVERY_MIN 60.
 
 on:
@@ -32,7 +31,7 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           REMIND_EVERY_MIN: "5"
-          CHECKS_PER_RUN: "5"
+          CHECKS_PER_RUN: "1"
           TEST_NOTIFY: ${{ inputs.test_notify && 'yes' || '' }}
         run: |
           if [ -n "$TEST_NOTIFY" ]; then exec python3 check.py --test-notify; fi
