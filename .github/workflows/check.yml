@@ -1,11 +1,12 @@
 name: Zara restock check
 
-# TEST MODE: one quick check every 5 min (GitHub's shortest schedule), reminders every 5 min.
-# Production: cron "4,19,34,49 * * * *", CHECKS_PER_RUN 1, REMIND_EVERY_MIN 60.
+# BACKUP ONLY: the every-minute watcher runs on Cloudflare (cloudflare/worker.js).
+# This runs only when started by hand (Actions → Run workflow).
+# To make it the main checker again, add back:
+#   schedule:
+#     - cron: "4,19,34,49 * * * *"
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       test_notify:

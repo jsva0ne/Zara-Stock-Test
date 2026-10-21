@@ -1,78 +1,58 @@
 # Zara restock watcher
 
-Checks the Zara items in `items.json` every 15 minutes (GitHub Actions, free)
-and pushes to your phone (ntfy, free) whenever a watched size can be added to
-the bag, then keeps reminding you until you mark the item bought.
+Push alerts to your phone (ntfy, free) when a Zara item you want can be added to
+the bag, with reminders until you mark it bought. Checks run **every minute** on
+Cloudflare Workers (free plan).
 
-> **Currently in test mode:** a check every minute, reminders every 5 minutes.
-> The header of `.github/workflows/check.yml` lists the production values.
+## How you use it
 
-## Setup (≈10 min)
+- **Add an item:** in the Zara app, tap Share → **ntfy** → your topic ending in
+  `-add`. You get a "Now watching" confirmation.
+  - Sizes default to S and XS. To override, add `size M` (or `sizes M L`) to the
+    shared text.
+  - Or paste the link to Claude, which adds it to `items.json`.
+- **Alert:** "Back in stock" (urgent) every time a watched size becomes buyable.
+  "Still in stock" reminders repeat while it stays buyable.
+  - **Open** goes to the product page.
+  - **Bought** stops the reminders.
+- **Stop without buying:** share the link again with the word `stop`, or tap Bought.
+- Favourites lists can't be watched, only single product links. Zara forbids
+  automated reading of shared lists.
 
-1. **Phone:** install the **ntfy** app (Play Store) and subscribe to a topic
-   with a long random name, e.g. `zara-0hznuom1nyrqwvpg`. Anyone who knows
-   the name can read it, so keep it private.
-   In the app's settings, allow it to ignore battery optimisation so pushes
-   arrive instantly.
-2. **GitHub:** create a new **public** repository (public = unlimited free
-   minutes; a private repo's 2,000 free minutes/month would run out at this
-   cadence). Upload all files from this folder, keeping the `.github/workflows/`
-   path.
-3. **Secret:** repo → Settings → Secrets and variables → Actions →
-   *New repository secret* → name `NTFY_TOPIC`, value = your topic name.
-4. **Test the alert path:** repo → Actions → *Zara restock check* →
-   *Run workflow* → tick *Only send a test notification* → Run.
-   Your phone should buzz within seconds.
-5. **Test the Zara path:** run it again without the tick. Open the run log:
-   each item prints `WAIT` (watched sizes out) or `HIT` (alert sent).
-   An `ERROR ... could not get JSON` line means Zara is blocking GitHub's
-   servers; see *If Zara blocks* below.
+## Where things live
 
-After that it runs on its own.
+| File | What it is |
+|---|---|
+| `cloudflare/worker.js` | The watcher. Pasted into the Cloudflare Worker. |
+| `items.json` | Items added via Claude/GitHub. `sizes: []` = any size; `"bought": true` stops it. |
+| `settings.json` | `remindEveryMin` and `defaultSizes`. The Worker reads it every run (GitHub caches it for up to ~5 min). |
+| `check.py` + `.github/workflows/check.yml` | Backup checker: GitHub Actions, manual runs only. |
+| `cloudflare/test-worker.js` | Read-only reachability test. |
 
-## Adding or changing items
+Items you add by sharing live in the Worker's storage. You can see them on the
+Worker's status page, which is its `.workers.dev` address.
 
-Edit `items.json`. Paste the product link (share links work as-is; the
-`v1=` number in the link pins the colour). `sizes` is a list like
-`["M"]` or `["S", "M"]`; an empty list `[]` means any size.
+## Cloudflare setup (once)
 
-```json
-[
-  { "url": "https://www.zara.com/hr/en/...-p05536102.html?v1=586069543", "sizes": ["M"] }
-]
-```
-
-## How alerts work
-
-- **Back in stock** (urgent): every time a watched size goes from unavailable
-  to buyable, including when it sells out and comes back again later.
-- **Still in stock** (high): a reminder every 60 minutes while it stays
-  buyable. Change the interval by adding a repository *variable*
-  `REMIND_EVERY_MIN` (Settings → Secrets and variables → Actions → Variables).
-- **Stop:** when you've bought it, add `"bought": true` to the item in
-  `items.json` (or delete the item).
-
-```json
-{ "url": "https://www.zara.com/hr/en/...", "sizes": ["S"], "bought": true }
-```
-
-Only `in_stock` and `low_on_stock` count as available; `coming_soon` and
-`out_of_stock` don't. `state.json` is the watcher's memory of what's currently
-in stock; you never need to edit it.
+1. **Storage:** Storage & Databases → KV → create a namespace (any name, e.g. `zara-watcher`).
+2. **Worker:** open your Worker → Edit code → paste `cloudflare/worker.js` → Deploy.
+3. **Settings → Bindings:** add a KV namespace binding, variable name `STATE`,
+   pointing at the namespace from step 1.
+4. **Settings → Variables and Secrets:** add a **Secret** named `NTFY_TOPIC` with
+   your topic name (only the name, no `https://ntfy.sh/`).
+5. **Settings → Trigger events:** add a Cron Trigger `* * * * *` (every minute).
+6. Open the Worker's address once. The status page should show ✅ for the topic and
+   storage; visiting it also switches on the Bought buttons.
+7. **Phone:** in ntfy, subscribe to `<your topic>-add` so it appears in the share
+   menu. Mute it if you don't want to see your own shares.
 
 ## Things to know
 
-- **Timing:** GitHub can start scheduled runs a few minutes late, and under
-  heavy load occasionally skips one. Expect "every 15–20 min", not exact.
-- **Failures email you:** if a run fails (Zara blocked, a size name typo, the
-  colour was removed), GitHub emails you about the failed run.
-- **Keep-alive:** GitHub pauses schedules in public repos after 60 days with
-  no activity. The script commits a small heartbeat to `state.json` once a
-  month to prevent that.
-
-## If Zara blocks
-
-The script reads the same JSON the product page itself loads, at 2 requests
-per 15 minutes. If GitHub's IP range ever gets blocked, the fallback is to
-run the same script on any always-on machine at home (a Raspberry Pi or old
-laptop) with cron: `*/15 * * * * NTFY_TOPIC=... python3 /path/check.py`.
+- **Limits used (free plan):** 1,440 runs/day out of 100,000. Storage is written only
+  when stock changes, roughly every 30 minutes otherwise, well under the 1,000/day limit.
+  Each run has 10 ms of processing, which fits roughly 10–30 items.
+- **No silent failures:** if checks keep failing for 30+ minutes (Zara blocking,
+  wrong size name), you get one "Zara watcher needs a look" push per day until it's
+  fixed. The status page shows the latest problem.
+- **Updating the Worker code** means pasting the new `worker.js` and clicking Deploy.
+  Lists and settings don't need that; they come from this repo.
