@@ -14,8 +14,10 @@ Standard library only, so it runs on a bare GitHub Actions runner.
 import json
 import os
 import random
+import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -35,6 +37,15 @@ KNOWN = BUYABLE | {"out_of_stock", "coming_soon", "back_soon"}
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/141.0 Safari/537.36")
+IN_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def error(msg):
+    """Log an error; on GitHub it also shows on the run's summary page."""
+    msg = " ".join(str(msg).split())
+    print(f"ERROR {msg}", file=sys.stderr)
+    if IN_ACTIONS:
+        print(f"::error::{msg}", flush=True)
 
 
 def urls_for(share_url):
@@ -59,7 +70,11 @@ def fetch_json(url, tries=3):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 return json.loads(r.read())
-        except Exception as e:  # HTTP error, timeout, or HTML block page
+        except urllib.error.HTTPError as e:
+            last = f"Zara HTTP {e.code}"
+        except json.JSONDecodeError:
+            last = "Zara sent a web page instead of JSON (likely a bot check)"
+        except Exception as e:  # timeout, DNS, connection reset
             last = e
             time.sleep(3 * (attempt + 1))
     raise RuntimeError(f"could not get JSON from {url}: {last}")
@@ -83,7 +98,14 @@ def read_sizes(data, v1):
 def notify(title, message, click, priority=5):
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if not topic:
-        raise RuntimeError("NTFY_TOPIC is not set")
+        raise RuntimeError("NTFY_TOPIC secret is empty or missing")
+    if not re.fullmatch(r"[-_A-Za-z0-9]{1,64}", topic):
+        bad = sorted({c for c in topic if not re.match(r"[-_A-Za-z0-9]", c)})
+        problem = f"contains {bad}" if bad else "longer than 64 characters"
+        raise RuntimeError(
+            f"NTFY_TOPIC is not a valid topic name ({len(topic)} chars, {problem}); "
+            f"use only the name, e.g. zara-abc123: letters, digits, - and _ only, "
+            f"no https://ntfy.sh/ prefix")
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     payload = {
         "topic": topic,
@@ -95,9 +117,15 @@ def notify(title, message, click, priority=5):
     }
     req = urllib.request.Request(
         server, data=json.dumps(payload).encode(), method="POST",
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        r.read()
+        headers={"Content-Type": "application/json", "User-Agent": "zara-restock-watcher"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:200]
+        raise RuntimeError(f"ntfy HTTP {e.code}: {body}") from None
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"cannot reach {server}: {e.reason}") from None
 
 
 def load_state():
@@ -108,8 +136,12 @@ def load_state():
 
 def main(argv):
     if "--test-notify" in argv:
-        notify("Zara watcher: test", "If you can read this, alerts work.",
-               "https://www.zara.com/hr/en/")
+        try:
+            notify("Zara watcher: test", "If you can read this, alerts work.",
+                   "https://www.zara.com/hr/en/")
+        except Exception as e:
+            error(f"test notification failed: {e}")
+            return 1
         print("Test notification sent.")
         return 0
 
@@ -139,7 +171,7 @@ def main(argv):
         try:
             name, colour, sizes = read_sizes(fetch_json(api), v1)
         except Exception as e:
-            print(f"ERROR {page}: {e}", file=sys.stderr)
+            error(f"{page}: {e}")
             errors += 1
             continue
 
@@ -149,8 +181,8 @@ def main(argv):
 
         watched = [(s, a) for s, a in sizes if not want or s.upper() in want]
         if want and not watched:
-            print(f"ERROR {name} ({colour}): sizes {want} not found; "
-                  f"sizes on page: {[s for s, _ in sizes]}", file=sys.stderr)
+            error(f"{name} ({colour}): sizes {want} not found; "
+                  f"sizes on page: {[s for s, _ in sizes]}")
             errors += 1
             continue
 
@@ -178,7 +210,7 @@ def main(argv):
             try:
                 notify(title, body, page, prio)
             except Exception as e:
-                print(f"ERROR notify failed, will retry next run: {e}", file=sys.stderr)
+                error(f"notify failed, will retry next run: {e}")
                 errors += 1
                 continue
             last = now.isoformat(timespec="seconds")
