@@ -3,10 +3,17 @@
   "remindAfterMin": 60,
   "maxItemsPerRun": 35,
   "sizeRules": {
-    "letters": ["XS", "S"],
-    "numbers": ["32", "34"],
-    "shoes": ["38"],
+    "letters": [
+      "XS",
+      "S"
+    ],
+    "numbers": [
+      "32",
+      "34"
+    ],
+    "shoes": [
+      "38"
+    ],
     "oneSize": true
-  },
-  "defaultSizes": ["S", "XS"]
+  }
 }

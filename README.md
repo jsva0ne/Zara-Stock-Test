@@ -32,7 +32,7 @@ for lists of up to ~105 items.
 |---|---|
 | `cloudflare/worker.js` | The watcher and bot. Pasted into the Cloudflare Worker. |
 | `items.json` | Items added via Claude/GitHub. `sizes: []` = any size; `"bought": true` stops it. |
-| `settings.json` | `checkEveryMin` (3), `remindAfterMin` (60), `maxItemsPerRun` (35), `sizeRules`. The Worker reads it every run (GitHub caches it for up to ~5 min). `defaultSizes` is only for the previous Worker version and can be deleted. |
+| `settings.json` | `checkEveryMin` (3), `remindAfterMin` (60), `maxItemsPerRun` (35), `sizeRules`. The Worker reads it every run (GitHub caches it for up to ~5 min). |
 | `check.py` + `.github/workflows/check.yml` | Old GitHub/ntfy checker: manual runs only, kept as a backup. |
 | `cloudflare/test-worker.js` | Read-only reachability test. |
 
