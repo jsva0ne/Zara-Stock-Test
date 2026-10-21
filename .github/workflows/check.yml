@@ -1,0 +1,44 @@
+name: Zara restock check
+
+on:
+  schedule:
+    # Every 15 min, off the top of the hour (GitHub delays :00 runs most).
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: "Only send a test notification"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # lets the run save state.json back to the repo
+
+concurrency:
+  group: zara-restock
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check stock
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          REMIND_EVERY_MIN: ${{ vars.REMIND_EVERY_MIN || '60' }}
+        run: python3 check.py ${{ inputs.test_notify && '--test-notify' || '' }}
+
+      - name: Save state
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update watcher state"
+            git pull --rebase --quiet   # in case items.json was edited meanwhile
+            git push
+          fi
